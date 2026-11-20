@@ -1,0 +1,9 @@
+/build/
+/results/
+CMakeUserPresets.json
+*.zip
+/upload/
+/library-verify/
+/.library-helper/
+/.codex/
+/asdole/
