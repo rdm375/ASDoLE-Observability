@@ -119,6 +119,17 @@ lambda(t) = (u - y_obs(0))/a * (exp(-a t) - exp(a t - 2 a T))
 J(u) = (u - y_obs(0))^2 * (1 - exp(-2 a T)) / (2 a)
 ```
 
+## Dynamical error propagation and cross-covariance analysis
+
+`asdole_cross_coupled_error` uses a two-state linear ODE to show how an initial
+error in one state propagates into another state through dynamical coupling.
+It uses the exact solution to isolate error propagation from time-discretization
+error. See [`docs/cross-coupled-error.md`](docs/cross-coupled-error.md) for the
+example derivation, [`docs/error-dynamics-control-theory.md`](docs/error-dynamics-control-theory.md)
+for the control-theory background, and
+[`docs/cross-covariance-theory.md`](docs/cross-covariance-theory.md) for
+covariance transport criteria and the inverse-problem connection.
+
 Build and run the control convergence study with:
 
 ```sh

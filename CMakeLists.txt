@@ -54,6 +54,9 @@ if(ASDOLE_BUILD_EXAMPLE)
     add_executable(asdole_inversion_robustness examples/inversion_robustness.cpp)
     target_link_libraries(asdole_inversion_robustness PRIVATE asdole)
 
+    add_executable(asdole_cross_coupled_error examples/cross_coupled_error.cpp)
+    target_link_libraries(asdole_cross_coupled_error PRIVATE asdole)
+
     if(BUILD_TESTING)
         foreach(theta IN ITEMS 0.5 0.6 0.7 1.0)
             string(REPLACE "." "_" theta_test_suffix "${theta}")
