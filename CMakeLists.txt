@@ -57,6 +57,21 @@ if(ASDOLE_BUILD_EXAMPLE)
     add_executable(asdole_cross_coupled_error examples/cross_coupled_error.cpp)
     target_link_libraries(asdole_cross_coupled_error PRIVATE asdole)
 
+    add_executable(asdole_covariance_transport examples/covariance_transport.cpp)
+    target_link_libraries(asdole_covariance_transport PRIVATE asdole)
+
+    add_executable(asdole_parameter_covariance_transport examples/parameter_covariance_transport.cpp)
+    target_link_libraries(asdole_parameter_covariance_transport PRIVATE asdole)
+
+    add_executable(asdole_covariance_checks examples/covariance_checks.cpp)
+    target_link_libraries(asdole_covariance_checks PRIVATE asdole)
+
+    add_executable(asdole_error_source_comparison examples/error_source_comparison.cpp)
+    target_link_libraries(asdole_error_source_comparison PRIVATE asdole)
+
+    add_executable(asdole_observation_gls examples/observation_gls.cpp)
+    target_link_libraries(asdole_observation_gls PRIVATE asdole)
+
     if(BUILD_TESTING)
         foreach(theta IN ITEMS 0.5 0.6 0.7 1.0)
             string(REPLACE "." "_" theta_test_suffix "${theta}")
@@ -81,5 +96,7 @@ if(ASDOLE_BUILD_EXAMPLE)
         add_test(NAME linear_state_tlm_adjoint_stability COMMAND asdole_stability_sweep)
         add_test(NAME nonnormal_tlm_adjoint_transient_growth COMMAND asdole_nonnormal_stability)
         add_test(NAME inverse_problem_noisy_parameter_recovery COMMAND asdole_inversion_robustness)
+        add_test(NAME covariance_transport_regressions COMMAND asdole_covariance_checks)
+        add_test(NAME persistent_parameter_vs_step_noise COMMAND asdole_error_source_comparison)
     endif()
 endif()

@@ -126,9 +126,53 @@ error in one state propagates into another state through dynamical coupling.
 It uses the exact solution to isolate error propagation from time-discretization
 error. See [`docs/cross-coupled-error.md`](docs/cross-coupled-error.md) for the
 example derivation, [`docs/error-dynamics-control-theory.md`](docs/error-dynamics-control-theory.md)
-for the control-theory background, and
+for the control-theory background,
 [`docs/cross-covariance-theory.md`](docs/cross-covariance-theory.md) for
-covariance transport criteria and the inverse-problem connection.
+covariance transport criteria and the inverse-problem connection, and
+[`docs/dynamical-error-propagation.md`](docs/dynamical-error-propagation.md)
+for the discrete implementation, state/parameter covariance recurrences,
+cross-time observation covariance, examples, and limitations.
+
+`include/asdole/covariance.hpp` propagates covariance with the same discrete
+TLM map used by the adjoint. `asdole_covariance_transport` advances the
+coupled two-state example with ASDoLE and compares the resulting state and
+covariance against their exact solutions. `asdole_parameter_covariance_transport`
+adds uncertainty in a persistent coupling parameter and reports the induced
+state/parameter cross-covariance.
+
+Build both examples and generate CSV/plots with:
+
+```sh
+cmake --build build --target asdole_covariance_transport asdole_parameter_covariance_transport --parallel
+./scripts/run_covariance_transport.sh
+./scripts/run_parameter_covariance.sh
+cmake --build build --target asdole_covariance_checks --parallel
+ctest --test-dir build -R covariance_transport_regressions --output-on-failure
+cmake --build build --target asdole_error_source_comparison --parallel
+./scripts/run_error_source_comparison.sh
+ctest --test-dir build -R persistent_parameter_vs_step_noise --output-on-failure
+```
+
+The first runner sweeps `theta = 0.5, 0.6, 0.7, 1.0` and five step counts;
+the second accepts an optional `theta` argument. See the implementation note
+for the equations, statistical assumptions, and dense-algorithm limits.
+The error-source comparison shows how a fixed uncertain coupling parameter
+differs from independent stepwise forcing errors, with their final induced
+variance matched for a direct comparison.
+
+The observation-space example stacks the time-correlated state uncertainty
+and white sensor noise into one covariance, then compares generalized and
+ordinary least squares while fitting a constant sensor bias. Run it with:
+
+```sh
+cmake --build build --target asdole_observation_gls --parallel
+bash scripts/run_observation_gls.sh
+```
+
+It writes the observation history, fit diagnostics, and plot under
+`results/observation-gls/`. The GLS routine uses a Cholesky solve and reports
+the fitted parameter covariance; it expects a positive-definite observation
+covariance and a full-column-rank design.
 
 Build and run the control convergence study with:
 
