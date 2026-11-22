@@ -174,6 +174,17 @@ It writes the observation history, fit diagnostics, and plot under
 the fitted parameter covariance; it expects a positive-definite observation
 covariance and a full-column-rank design.
 
+To measure how the system forgets initial conditions, build and run:
+
+```sh
+cmake --build build --target asdole_initial_condition_forgetting --parallel
+bash scripts/run_initial_condition_forgetting.sh
+```
+
+This tracks a selected initial perturbation, worst-case TLM gain, propagated
+initial-state covariance, and accumulated information from observing `y`.
+CSV, summary, and plot outputs go to `results/initial-condition-forgetting/`.
+
 Build and run the control convergence study with:
 
 ```sh

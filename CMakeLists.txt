@@ -72,6 +72,15 @@ if(ASDOLE_BUILD_EXAMPLE)
     add_executable(asdole_observation_gls examples/observation_gls.cpp)
     target_link_libraries(asdole_observation_gls PRIVATE asdole)
 
+    add_executable(asdole_initial_condition_forgetting examples/initial_condition_forgetting.cpp)
+    target_link_libraries(asdole_initial_condition_forgetting PRIVATE asdole)
+
+    add_executable(asdole_contraction_analysis examples/contraction_analysis.cpp)
+    target_link_libraries(asdole_contraction_analysis PRIVATE asdole)
+
+    add_executable(asdole_nonlinear_contraction_analysis examples/nonlinear_contraction_analysis.cpp)
+    target_link_libraries(asdole_nonlinear_contraction_analysis PRIVATE asdole)
+
     if(BUILD_TESTING)
         foreach(theta IN ITEMS 0.5 0.6 0.7 1.0)
             string(REPLACE "." "_" theta_test_suffix "${theta}")

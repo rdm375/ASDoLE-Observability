@@ -430,6 +430,73 @@ different `theta` as the third runner argument, for example
 - Cross-time covariance can require substantial storage if all node pairs
   are retained. The API computes a requested pair on demand instead.
 
+## Initial-condition forgetting and information saturation
+
+For a stable linear system, perturbations of the initial state evolve as
+
+$$
+e(t)=\Phi(t,0)e(0),\qquad P(t)=\Phi(t,0)P(0)\Phi(t,0)^\mathsf{T}.
+$$
+
+If the state-transition matrix \(\Phi(t,0)\) decays, both individual
+perturbations and their absolute covariance fade. This example uses
+
+$$
+\dot{x}=-x,\qquad \dot{y}=x-y,
+$$
+
+for which
+
+$$
+\Phi(t,0)=e^{-t}\begin{bmatrix}1&0\\t&1\end{bmatrix}.
+$$
+
+Thus \(e_x(t)=e^{-t}e_x(0)\) and
+\(e_y(t)=e^{-t}(e_y(0)+t e_x(0))\). The polynomial factor comes from the
+coupling and repeated eigenvalue; the asymptotic exponential decay rate is
+still 1. With independent initial variances \(\sigma_x^2,\sigma_y^2\),
+
+$$
+P(t)=e^{-2t}\begin{bmatrix}
+\sigma_x^2&t\sigma_x^2\\
+t\sigma_x^2&t^2\sigma_x^2+\sigma_y^2
+\end{bmatrix}.
+$$
+
+Every covariance entry tends to zero, with asymptotic exponential rate 2.
+The normalized correlation \(P_{xy}/\sqrt{P_{xx}P_{yy}}\), however, tends to
+one: what remains becomes aligned even while its absolute magnitude vanishes.
+
+`asdole_initial_condition_forgetting` computes these quantities using the
+ASDoLE discrete TLM and covariance transport. It also accumulates the
+quadrature-weighted initial-state information matrix for observations of
+\(y\),
+
+$$
+\mathcal I(T)=\int_0^T \Phi(t,0)^\mathsf{T}H^\mathsf{T}R^{-1}H\Phi(t,0)\,dt,
+\qquad H=[0\;1].
+$$
+
+Since the initial-state sensitivities decay, the information rate fades and
+\(\mathcal I(T)\) approaches a finite limit. This means extending the
+observation window far into the decayed regime contributes little additional
+information about the initial state. A single sensor observing \(y\) still
+has two independent sensitivity directions over a finite time interval, so
+the accumulated information matrix becomes full rank.
+
+Build and run the study with:
+
+```sh
+cmake --build build --target asdole_initial_condition_forgetting --parallel
+bash scripts/run_initial_condition_forgetting.sh
+```
+
+The CSV records a selected perturbation, the worst-case 2-norm TLM gain,
+covariance entries, local decay rates, and accumulated information eigenvalues.
+The fitted rates use the late-time window and are finite-time estimates; the
+analytic asymptotic rates for this model are 1 for state errors and 2 for
+covariance.
+
 ## References
 
 - R. E. Kalman, “A New Approach to Linear Filtering and Prediction Problems,”
