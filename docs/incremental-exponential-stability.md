@@ -5,6 +5,8 @@ quantitative stability criteria and describes what those criteria say about
 state and covariance errors. The small C++ interface in
 `include/asdole/contraction.hpp` checks linear Lyapunov inequalities and
 weighted contraction factors of the actual discrete ASDoLE tangent map.
+The matrix checks use floating-point arithmetic and a scale-relative
+tolerance; they are numerical certificates, not verified-arithmetic proofs.
 
 ## 1. From forgetting to incremental stability
 
@@ -59,6 +61,20 @@ $$
 \|e(t)\|_W\le e^{-\lambda(t-t_0)}\|e(t_0)\|_W.
 $$
 
+To check the inequality numerically, define
+\(R=A^\mathsf{T}W+WA+2\lambda W\), factor \(W=LL^\mathsf{T}\), and transform
+the residual by congruence:
+
+$$
+C=L^{-1}RL^{-\mathsf{T}}.
+$$
+
+This leaves the sign test unchanged while removing dependence on the arbitrary
+overall scale of \(W\). The tolerance is relative to the magnitudes of the
+normalized Lyapunov terms. Consequently, replacing \(W\) by \(cW\), \(c>0\),
+must not change whether the certificate passes.
+`largest_residual_eigenvalue` reports \(\lambda_{\max}(C)\).
+
 To express the same guarantee in the Euclidean norm, let \(mI\preceq W\preceq
 MI\), where \(m=\lambda_{\min}(W)\), \(M=\lambda_{\max}(W)\). Then
 
@@ -71,6 +87,18 @@ come with a large Euclidean transient prefactor. For Hurwitz \(A\), the
 Lyapunov equation \(A^\mathsf{T}W+WA=-Q\), with any \(Q\succ0\), has a unique
 solution \(W\succ0\). It certifies a positive rate, though not necessarily
 the best rate or the smallest transient bound.
+
+`lyapunov_metric_for_rate(A, rate, Q)` constructs (W) for a requested
+rate. `estimate_lyapunov_metric(A, safety_fraction)` uses (Q=I), numerically
+searches for the largest feasible shifted rate, then multiplies that estimate
+by `safety_fraction` (default 0.8) and verifies the resulting certificate.
+For a Hurwitz matrix, the limiting rate is the distance from the rightmost
+eigenvalue to the imaginary axis. The returned limit is a floating-point
+estimate, not a rigorous upper bound; choosing a safety fraction backs away
+from an ill-conditioned boundary metric. Inspect `smallest_weight_eigenvalue`,
+`largest_weight_eigenvalue`, and their ratio before interpreting the resulting
+Euclidean bound. The implementation vectorizes the dense Lyapunov equation,
+so it is intended for small systems rather than large pipe networks.
 
 ### Euclidean one-sided Lipschitz test
 
@@ -101,10 +129,16 @@ $$
 $$
 
 This extends contraction tests to systems that are not contractive in the
-ordinary Euclidean metric. In practice, proving bounds on the full region can
-require interval methods, symbolic inequalities, or optimization over that
-region; this repository currently provides dense finite-dimensional numeric
-checks, not a formal verified-arithmetic proof.
+ordinary Euclidean metric. The regional API added here handles a fixed
+axis-aligned box and the Euclidean metric. It requires interval-enclosure
+callbacks for the vector field and Jacobian, checks the inward-pointing
+condition on each box face, and bounds the largest eigenvalue of the symmetric
+Jacobian by Gershgorin discs. The bound can be conservative. A result is valid
+only if the callbacks enclose the full ranges they claim; sampled values are
+not sufficient. The built-in interval arithmetic widens basic operations by
+one representable value, but this is still ordinary floating-point software,
+not a complete verified-arithmetic system or proof against compiler modes that
+discard rounding behavior.
 
 ## 3. What the certificate says about forcing and parameter errors
 
@@ -239,6 +273,16 @@ factors and rate, and the estimated final weighted TLM gain against the
 product bound.
 CSV output is written to `results/contraction-analysis/contraction.csv`.
 
+The targeted regression executable checks both rejection of an unstable
+system with a very small \(W\) and invariance under positive rescaling of \(W\).
+It also checks that the discrete weighted induced norm is unchanged by that
+rescaling. Run those CTest cases with:
+
+```sh
+cmake --build build --target asdole_contraction_checks --parallel
+ctest --test-dir build -R 'contraction_certificate_scale_invariance|weighted_contraction_norm_scale_invariance' --output-on-failure
+```
+
 ## 7. Nonlinear example: the polynomial two-state model
 
 `asdole_nonlinear_contraction_analysis` reuses the polynomial model from the
@@ -264,10 +308,18 @@ y=-1: & f_2=1.15-0.22x\ge0.93.
 $$
 
 The symmetric Jacobian \(S=(J+J^\mathsf{T})/2\) is affine in \(x,y\).
-Since \(\lambda_{\max}(S)\) is a convex function of a symmetric matrix,
-its maximum on this rectangle is bounded by the maximum of its values at
-the four vertices. That maximum is \(-0.59\), giving the global Euclidean
-incremental contraction guarantee
+Since \(\lambda_{\max}(S)\) is convex, direct evaluation at the four vertices
+gives the sharper bound \(-0.59\). The reusable interval API instead uses a
+single natural interval extension and a Gershgorin bound; for this example it
+certifies the conservative upper bound \(-0.54\). Both imply a global
+Euclidean incremental contraction guarantee. The generic API reports
+
+$$
+\|x(t)-\widetilde x(t)\|_2
+\le e^{-0.54(t-t_0)}\|x(t_0)-\widetilde x(t_0)\|_2.
+$$
+
+The sharper hand-derived bound is
 
 $$
 \|x(t)-\widetilde x(t)\|_2
@@ -295,6 +347,61 @@ cmake --build build --target asdole_nonlinear_contraction_analysis --parallel
 ```
 
 It writes `results/contraction-analysis/nonlinear_contraction.csv`. With the
-included \(\theta=0.7\), \(h=0.01\) run, the continuous regional rate is
-0.59, every sampled discrete TLM step contracts, and the finite initial-state
+included \(\theta=0.7\), \(h=0.01\) run, the interval regional rate is
+0.54, every sampled discrete TLM step contracts, and the finite initial-state
 separation falls from 0.05 to about \(3.32\times10^{-6}\) by \(t=12\).
+
+## 8. Regression checks for the new workflows
+
+The contraction check executable tests that automatic metric selection
+recovers the rate limit 1 for the nonnormal coupled-decay matrix, rejects an
+unstable scalar matrix, certifies the nonlinear polynomial box, and rejects a
+box whose vector field points outward. Run all four focused contraction
+regressions with:
+
+```sh
+cmake --build build --target asdole_contraction_checks asdole_nonlinear_contraction_analysis --parallel
+ctest --test-dir build -R 'contraction_certificate_scale_invariance|weighted_contraction_norm_scale_invariance|automatic_lyapunov_metric_nonnormal|regional_nonlinear_contraction_box|discrete_asdole_regional_contraction_box|two_state_discrete_regional_contraction' --output-on-failure
+```
+
+## 9. Regional contraction of the discrete step
+
+The continuous-time regional result does not alone establish contraction of
+the finite-step ASDoLE map. For a fixed step size, let
+\(x_{k+1}=\Psi_h(x_k)\). `certify_discrete_box_contraction` accepts interval
+enclosures of \(\Psi_h(B)\) and \(D\Psi_h(B)\) over a box \(B\). It checks
+both
+
+$$
+\Psi_h(B)\subseteq B
+\quad\text{and}\quad
+\sup_{x\in B}\|D\Psi_h(x)\|_2<1.
+$$
+
+For the second check it encloses \(M^\mathsf{T}M\), where
+\(M\in D\Psi_h(B)\), and applies a Gershgorin upper bound to its largest
+eigenvalue. If both checks pass, the discrete map leaves the box invariant
+and contracts every pair of states in it by the reported factor bound.
+This is a sufficient test and interval dependency can make it conservative.
+As with the continuous API, correctness depends on callback enclosures that
+cover the full ranges; callbacks cannot be replaced by point samples.
+
+The scalar regression uses the nonlinear ODE
+\(y'=-0.8y+0.1y^2\), the ASDoLE step with \(h=0.1\) and \(\theta=0.7\),
+and \(B=[-0.3,0.3]\). Interval dual arithmetic encloses the discrete map and
+its derivative. The test certifies box invariance and an induced-factor upper
+bound of about 0.943708. This verifies the actual discrete update, not just
+the continuous vector field.
+
+The same machinery is also applied to the existing two-state polynomial
+model on \([-1,1]^2\), using \(h=0.01\) and \(\theta=0.7\). A centered
+interval enclosure of the state map uses the interval-dual Jacobian bound;
+the resulting map enclosure lies inside the box, and the induced Jacobian
+factor bound is 0.997484445276. Its corners and center are additionally
+compared with the standard double-precision ASDoLE state step and TLM to catch
+implementation mismatches. Run this focused regression with:
+
+```sh
+cmake --build build --target asdole_nonlinear_contraction_analysis --parallel
+ctest --test-dir build -R two_state_discrete_regional_contraction --output-on-failure
+```

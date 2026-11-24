@@ -165,6 +165,60 @@ inline std::vector<DenseMatrix> propagate_covariance(
     return result;
 }
 
+// Apply P = L L^T to a vector without forming the dense covariance matrix.
+inline Vector apply_covariance_factor(const DenseMatrix& factor,
+                                     std::span<const double> direction) {
+    if (factor.rows() != direction.size())
+        throw std::invalid_argument("covariance factor and vector dimensions differ");
+    Vector reduced(factor.cols(), 0.0);
+    for (std::size_t j = 0; j < factor.cols(); ++j)
+        for (std::size_t i = 0; i < factor.rows(); ++i)
+            reduced[j] += factor(i,j) * direction[i];
+    Vector result(factor.rows(), 0.0);
+    for (std::size_t i = 0; i < factor.rows(); ++i)
+        for (std::size_t j = 0; j < factor.cols(); ++j)
+            result[i] += factor(i,j) * reduced[j];
+    return result;
+}
+
+// Advance a low-rank covariance factor by one discrete TLM step:
+// if P_k = L_k L_k^T, then L_{k+1} = M_k L_k and P_{k+1}=L_{k+1}L_{k+1}^T.
+// The state transition is applied column by column and is never materialized.
+template<class TrajectoryLinearization>
+inline DenseMatrix propagate_covariance_factor_step(
+    const TrajectoryLinearization& trajectory,
+    const DenseMatrix& factor, std::size_t step) {
+    if (factor.rows() != trajectory.state_dimension())
+        throw std::invalid_argument("covariance factor row count must match state dimension");
+    if (step >= trajectory.step_count())
+        throw std::out_of_range("covariance factor step index out of range");
+    DenseMatrix next(factor.rows(), factor.cols());
+    for (std::size_t column = 0; column < factor.cols(); ++column) {
+        Vector direction(factor.rows());
+        for (std::size_t i = 0; i < factor.rows(); ++i) direction[i] = factor(i,column);
+        const Vector image = trajectory.apply_step(direction, step);
+        for (std::size_t i = 0; i < factor.rows(); ++i) next(i,column) = image[i];
+    }
+    return next;
+}
+
+// Return factor histories for deterministic covariance transport. Storage is
+// O(number_of_nodes * state_dimension * factor_rank); for streaming use, call
+// propagate_covariance_factor_step and retain only the current factor.
+template<class TrajectoryLinearization>
+inline std::vector<DenseMatrix> propagate_covariance_factor(
+    const TrajectoryLinearization& trajectory,
+    const DenseMatrix& initial_factor) {
+    if (initial_factor.rows() != trajectory.state_dimension())
+        throw std::invalid_argument("initial covariance factor row count must match state dimension");
+    std::vector<DenseMatrix> result;
+    result.reserve(trajectory.node_count());
+    result.push_back(initial_factor);
+    for (std::size_t k = 0; k < trajectory.step_count(); ++k)
+        result.push_back(propagate_covariance_factor_step(trajectory, result.back(), k));
+    return result;
+}
+
 // Propagate a joint covariance for [state; parameter] when the parameter is
 // constant in time. parameter_step_sensitivities[k] is B_k in
 //   dx_{k+1} = M_k dx_k + B_k dp + w_k,  dp_{k+1} = dp_k.

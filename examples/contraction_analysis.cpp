@@ -20,7 +20,7 @@ constexpr double theta = 0.7;
 constexpr double final_time = 12.0;
 constexpr int steps = 480;
 constexpr double dt = final_time / steps;
-constexpr double certified_rate = 0.8;
+constexpr double rate_safety_fraction = 0.8;
 
 void rhs(std::span<const double> x, std::span<double> f) {
     f[0] = -x[0];
@@ -43,10 +43,9 @@ int main(int argc, char** argv) {
         DenseMatrix a(2);
         a(0,0) = -1.0; a(0,1) = 0.0;
         a(1,0) = 1.0;  a(1,1) = -1.0;
-        // Solves (A + 0.8 I)^T W + W(A + 0.8 I) = -I.
-        DenseMatrix w(2);
-        w(0,0) = 33.75; w(0,1) = 6.25;
-        w(1,0) = 6.25;  w(1,1) = 2.5;
+        const auto selected_metric = estimate_lyapunov_metric(a, rate_safety_fraction);
+        const DenseMatrix& w = selected_metric.weight;
+        const double certified_rate = selected_metric.requested_rate;
         const auto continuous = certify_continuous_contraction(a, w, certified_rate);
         if (!continuous.certified)
             throw std::runtime_error("expected Lyapunov contraction certificate did not pass");
@@ -103,6 +102,7 @@ int main(int argc, char** argv) {
                   << " final_time=" << final_time
                   << "\ncontinuous_lyapunov_certificate=" << (continuous.certified ? "PASS" : "FAIL")
                   << " requested_rate=" << certified_rate
+                  << " estimated_rate_limit=" << selected_metric.estimated_rate_limit
                   << " residual_max_eigenvalue=" << continuous.largest_residual_eigenvalue
                   << " W_eigenvalues=[" << continuous.smallest_weight_eigenvalue << ','
                   << continuous.largest_weight_eigenvalue << ']'

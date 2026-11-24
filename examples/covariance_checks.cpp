@@ -262,6 +262,35 @@ void joint_parameter_covariance_matches_finite_differences() {
             "joint state/parameter covariance disagrees with finite-difference sensitivities");
 }
 
+void low_rank_factor_matches_dense_covariance() {
+    LinearRun run(0.7, 40);
+    DenseMatrix factor(2, 2);
+    factor(0,0) = 0.1;
+    factor(1,0) = 0.03;
+    factor(1,1) = 0.08;
+    const DenseMatrix p0 = multiply(factor, transpose(factor));
+    const auto dense_history = asdole::propagate_covariance(run.linearization, p0);
+    const auto factor_history = asdole::propagate_covariance_factor(run.linearization, factor);
+    require(factor_history.size() == dense_history.size(),
+            "low-rank covariance history has the wrong node count");
+    double maximum_error = 0.0;
+    for (std::size_t k = 0; k < factor_history.size(); ++k) {
+        const DenseMatrix reconstructed = multiply(factor_history[k], transpose(factor_history[k]));
+        maximum_error = std::max(maximum_error, relative_matrix_error(reconstructed, dense_history[k]));
+    }
+    const Vector direction{0.7, -0.4};
+    const Vector matrix_free = asdole::apply_covariance_factor(factor_history.back(), direction);
+    const Vector dense_action = {
+        dense_history.back()(0,0)*direction[0] + dense_history.back()(0,1)*direction[1],
+        dense_history.back()(1,0)*direction[0] + dense_history.back()(1,1)*direction[1]};
+    const double action_error = std::hypot(matrix_free[0]-dense_action[0],
+                                            matrix_free[1]-dense_action[1]);
+    std::cout << "low_rank_covariance_factor_max_relative_error=" << maximum_error
+              << " covariance_action_error=" << action_error << '\n';
+    require(maximum_error < 1.0e-11 && action_error < 1.0e-13,
+            "matrix-free low-rank covariance disagrees with dense propagation");
+}
+
 } // namespace
 
 int main() {
@@ -271,6 +300,7 @@ int main() {
         process_noise_psd_and_symmetry();
         cross_time_and_observation_covariance();
         joint_parameter_covariance_matches_finite_differences();
+        low_rank_factor_matches_dense_covariance();
         std::cout << "result=PASS\n";
         return 0;
     } catch (const std::exception& error) {

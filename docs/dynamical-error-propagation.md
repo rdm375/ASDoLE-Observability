@@ -419,16 +419,258 @@ different `theta` as the third runner argument, for example
   numerical map. It does **not** estimate ASDoLE truncation error. Treating a
   local error estimate as random process noise requires a separate model.
 - In a nonlinear model, first-order covariance may miss skewness,
-  multimodality, and curvature effects. An ensemble comparison is a useful
-  later validation step, not a guarantee that the linearized covariance is
-  accurate for arbitrary uncertainty size.
+  multimodality, and curvature effects. The seeded nonlinear ensemble example
+  below compares the propagated discrete-TLM covariance with Monte Carlo
+  covariance for a small initial spread; it does not make the linearized
+  prediction accurate for arbitrary uncertainty size.
 - Current propagation is dense: storing one covariance costs \(O(n^2)\), and
   each step forms a dense transition matrix using \(n\) TLM applications.
   This is appropriate for the current low-dimensional analyses. Large pipe
-  networks will need low-rank factors, sparse/structured transitions, or
-  matrix-free covariance actions.
+  networks will need sparse/structured transitions or low-rank covariance
+  factors. The low-rank deterministic path is available below. The matrix-free
+  state stepper described below avoids dense Jacobian storage, while the
+  current discrete TLM/adjoint and covariance-transition construction still
+  use the dense reference stepper.
 - Cross-time covariance can require substantial storage if all node pairs
   are retained. The API computes a requested pair on demand instead.
+
+## Low-rank covariance factors for larger state vectors
+
+When uncertainty is concentrated in a small number (r) of directions, store
+the covariance as
+
+$$
+P_k=L_kL_k^\mathsf{T},\qquad L_k\in\mathbb{R}^{n\times r}.
+$$
+
+For the discrete TLM step (M_k), propagate the factor directly:
+
+$$
+L_{k+1}=M_kL_k.
+$$
+
+`propagate_covariance_factor_step` applies the existing matrix-free TLM once
+per factor column and never forms the dense transition or covariance.
+`propagate_covariance_factor` returns the factor at every node. For streaming
+with only (O(nr)) factor storage, repeatedly call the step function and keep
+only the newest factor. `apply_covariance_factor(L,v)` evaluates (Pv) as
+(L(L^\mathsf{T}v)), without constructing (P).
+
+This deterministic path preserves the initial factor rank and is useful when
+(r\ll n). Its per-step work is (r) TLM actions rather than (n) actions
+to form a dense (M_k), with (O(nr)) storage instead of (O(n^2)). The
+current implementation does not yet add process-noise factors, compress a
+growing factor, or support matrix-free process-noise covariance. The covariance regression
+compares this low-rank route against dense propagation on the coupled-decay
+example:
+
+```sh
+cmake --build build --target asdole_covariance_checks --parallel
+ctest --test-dir build -R covariance_transport_regressions --output-on-failure
+```
+
+## Nonlinear covariance ensemble check
+
+`asdole_nonlinear_covariance_ensemble` integrates a two-state nonlinear model
+from a nominal initial condition and from 30,000 independently sampled initial
+conditions. It compares the sample covariance at the final time with the
+covariance propagated by the discrete TLM along the nominal ASDoLE trajectory.
+The initial uncertainty is independent Gaussian noise with standard deviation
+0.01 in each coordinate, and the random seed is fixed so runs are repeatable.
+The `--check` mode fails if the relative covariance discrepancy exceeds 4%;
+this tolerance allows for finite-ensemble sampling error. Reduce the initial
+spread to study the local, first-order regime, or increase it to see nonlinear
+curvature make the Gaussian/TLM approximation less accurate. `--sweep` runs
+initial standard deviations 0.01, 0.1, 0.5, and 1.0; `--sigma VALUE`
+selects one alternate standard deviation. In this example the mismatch is
+near the ensemble sampling level at the smaller spreads, rises to about 2% at
+0.5, and exceeds 4% at 1.0, illustrating where the local TLM covariance stops
+being a good approximation for the full ensemble.
+
+```sh
+cmake --build build --target asdole_nonlinear_covariance_ensemble --parallel
+./build/asdole_nonlinear_covariance_ensemble
+./build/asdole_nonlinear_covariance_ensemble --check
+./build/asdole_nonlinear_covariance_ensemble --sweep
+```
+
+## Matrix-free state steps and scaling
+
+`include/asdole/matrix_free.hpp` adds a matrix-free ASDoLE path that accepts a
+Jacobian-vector action and solves each shifted system
+`(I - theta h J) delta = b` with restarted GMRES. It never assembles the
+Jacobian or shifted matrix. The companion
+`matrix_free_differentiation.hpp` accepts Jacobian-transpose products,
+directional Jacobian derivatives, and a Hessian bilinear pullback. These
+callbacks provide exact discrete TLM and adjoint actions without forming a
+dense Jacobian or Hessian. Low-rank covariance factors can be propagated
+through this trajectory linearization using the same covariance API.
+
+The derivative callbacks must be mutually consistent: the transpose action
+must be the true adjoint of the Jacobian action, and the Hessian pullback must
+satisfy `g dot v = left^T (D J(y)[v]) right`. Krylov tolerances also introduce
+small solve errors into the discrete step and its derivative actions. This is
+a dependency-free baseline for sparse/structured models; callers can later
+substitute preconditioned iterative or sparse-direct solvers. Dense
+initial-state observation analyses and the existing inversion workflow still
+use the dense trajectory type. The parameter-to-observation sensitivity API
+for this matrix-free trajectory is described in the PDE inverse example.
+
+`asdole_matrix_free_scaling` compares one step on a one-dimensional discrete
+Laplacian model. It reports matrix-free solve time, total GMRES iterations and
+residual, then compares with dense stepping through dimension 256. Larger
+dimensions use only the matrix-free path. Timings depend on the machine and
+are illustrative, not performance guarantees. `--check` compares the state
+maps at small dimensions.
+
+```sh
+cmake --build build --target asdole_matrix_free_scaling --parallel
+./build/asdole_matrix_free_scaling
+./build/asdole_matrix_free_scaling --check
+```
+
+## Matrix-free reaction-diffusion experiment
+
+`asdole_matrix_free_reaction_diffusion` applies the state, TLM, adjoint, and
+rank-two covariance-factor machinery to the one-dimensional Fisher–KPP model
+with homogeneous Dirichlet boundaries:
+
+$$
+u_t = 0.005 u_{xx} + 2u(1-u),\qquad 0<x<1.
+$$
+
+The spatial second derivative is a centered finite-difference stencil on 48
+interior points. The example advances to time 0.5 with `theta=0.7` and
+100 ASDoLE steps. It reports final state range, average GMRES iterations per
+ASDoLE step, the terminal TLM against a forward finite difference, the
+TLM/adjoint dot-product defect, and the change in trace of a rank-two propagated
+covariance factor. The covariance trace grows in this run because the
+reaction term amplifies perturbations faster than diffusion damps them.
+
+```sh
+cmake --build build --target asdole_matrix_free_reaction_diffusion --parallel
+./build/asdole_matrix_free_reaction_diffusion
+./build/asdole_matrix_free_reaction_diffusion --check
+ctest --test-dir build -R matrix_free_reaction_diffusion_checks --output-on-failure
+```
+
+The check mode enforces TLM/finite-difference agreement, the discrete
+TLM/adjoint identity, and finite positive covariance. The model is small
+enough for quick experiments while exercising the sparse stencil interface.
+
+## Matrix-free reaction-diffusion parameter inversion
+
+`asdole_matrix_free_reaction_diffusion_inverse` estimates the Fisher–KPP
+diffusivity `D` and growth rate `r` jointly from three point sensors observed
+at 11 times. It minimizes the time-quadrature-weighted least-squares objective
+
+$$
+\Phi(D,r)=\frac12\sum_j w_j\bigl(H_j u_{k_j}(D,r)-d_j\bigr)^2,
+$$
+
+where synthetic data use `D=0.005`, `r=2.0`, plus a small deterministic
+perturbation. Optimization uses `log(D)` and `log(r)` so trial values remain
+positive. The initial estimate is `D=0.009`, `r=1.3`. The matrix-free
+parameter sensitivity operator propagates the discrete parameter TLM forward,
+applies observation operators at the selected nodes, and computes its
+transpose by the discrete adjoint. Damped Gauss–Newton uses the resulting
+gradient and the `G^T W G` curvature; only the two-dimensional parameter
+normal matrix is materialized.
+
+The identifiability analysis uses singular values of the time-quadrature-
+weighted observation sensitivity with respect to `(log D, log r)`, so the
+columns measure relative parameter changes rather than mixing physical units.
+The full 33-observation set has rank two and a
+condition number near 1.37 in this run. A single final-time sensor value has
+rank one, so it cannot identify both unknown parameters. The check also
+compares both adjoint gradients with centered finite differences, verifies the
+sensitivity/transpose dot identity, and checks recovery of the generating
+parameters. The fit recovers `D=0.00500046` and `r=1.999976` in five
+Gauss–Newton iterations.
+
+```sh
+cmake --build build --target asdole_matrix_free_reaction_diffusion_inverse --parallel
+./build/asdole_matrix_free_reaction_diffusion_inverse
+./build/asdole_matrix_free_reaction_diffusion_inverse --check
+ctest --test-dir build -R matrix_free_reaction_diffusion_inverse_checks --output-on-failure
+```
+
+## Joint estimation with an uncertain initial profile
+
+The two-parameter PDE fit assumes a known initial profile. The companion
+`asdole_matrix_free_reaction_diffusion_joint_initial` example relaxes that
+assumption by adding two smooth initial-profile coefficients to the unknowns.
+For a positive reference profile (u_{\mathrm{ref}}), it uses
+
+$$
+u_0(x;a)=u_{\mathrm{ref}}(x)
+\exp\!\left(a_1\cos(\pi x)+a_2\cos(2\pi x)\right).
+$$
+
+This keeps the profile positive in the interior and preserves the homogeneous
+Dirichlet boundaries. The estimated vector is
+
+$$
+q=(\log D,\log r,a_1,a_2).
+$$
+
+The observation misfit is weighted by the stated independent sensor-noise
+standard deviation. A Gaussian prior with standard deviation 0.25 is applied
+to each initial-profile coefficient. The prior stabilizes the fit; it is not
+counted as data information in the reported joint sensitivity rank. The
+example compares that data-only rank with physical-parameter information
+after eliminating the two initial-profile nuisance directions by a Schur
+complement that includes their prior precision.
+
+With three sensors and 11 observation times, this synthetic case recovers
+`D=0.00500418`, `r=1.999861`, and initial-profile coefficients
+`[0.15991,-0.11010]` from initial guesses `D=0.009`, `r=1.3`, and `[0,0]`.
+The four-column data sensitivity has rank four and condition number about
+10.7. After accounting for the initial-profile coefficients, the two
+physical-parameter directions retain rank two (conditional condition number
+about 1.68). A single final-time sensor still has rank one. TLM/adjoint dot
+and finite-difference gradient checks include all four unknowns.
+
+This experiment deliberately uses a two-mode initial-profile family. A full
+48-value discretized initial state plus (D,r) would have 50 unknowns but
+only 33 scalar observations, so the data-only sensitivity could not have full
+column rank. A prior could produce a regularized estimate, but would not make
+those 50 quantities identifiable from these data. For higher-dimensional
+initial states, the next project should use a structured prior and a scalable
+matrix-free optimizer, and report prior-conditioned uncertainty separately
+from information supplied by observations.
+
+```sh
+cmake --build build --target asdole_matrix_free_reaction_diffusion_joint_initial --parallel
+./build/asdole_matrix_free_reaction_diffusion_joint_initial --check
+ctest --test-dir build -R matrix_free_reaction_diffusion_joint_initial_checks --output-on-failure
+```
+
+## PDE initial-condition forgetting
+
+The Fisher–KPP model has many admissible positive initial profiles, yet for
+these parameters they approach the same stable positive steady profile. The
+`asdole_matrix_free_reaction_diffusion_forgetting` example starts from two
+distinct smooth profiles, advances both with the matrix-free ASDoLE stepper,
+and tracks their spatial $L^2$ separation. It also propagates a rank-two
+initial covariance factor along one trajectory to measure local perturbation
+forgetting.
+
+The separation grows slightly at first (from about 0.329 to 0.358 by time
+0.5), showing transient amplification, then decays to approximately
+`1.1e-11` by time 15. The terminal infinity norm of the semidiscrete PDE
+residual is `5.1e-11`, confirming the trajectories have reached the steady
+profile numerically. The rank-two covariance trace falls by about 20 orders of
+magnitude. This is initial-condition forgetting within the basin of the
+positive steady state; the zero solution remains a separate equilibrium, so
+the claim is not global over every possible nonnegative initial profile.
+
+```sh
+cmake --build build --target asdole_matrix_free_reaction_diffusion_forgetting --parallel
+./build/asdole_matrix_free_reaction_diffusion_forgetting
+./build/asdole_matrix_free_reaction_diffusion_forgetting --check
+ctest --test-dir build -R matrix_free_reaction_diffusion_initial_forgetting --output-on-failure
+```
 
 ## Initial-condition forgetting and information saturation
 

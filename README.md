@@ -132,6 +132,9 @@ covariance transport criteria and the inverse-problem connection, and
 [`docs/dynamical-error-propagation.md`](docs/dynamical-error-propagation.md)
 for the discrete implementation, state/parameter covariance recurrences,
 cross-time observation covariance, examples, and limitations.
+[`docs/pipe-state-finding-handoff.md`](docs/pipe-state-finding-handoff.md)
+defines the boundary between this reusable analysis project and the planned
+transient pipe hydraulic state-finding project.
 
 `include/asdole/covariance.hpp` propagates covariance with the same discrete
 TLM map used by the adjoint. `asdole_covariance_transport` advances the
@@ -160,6 +163,109 @@ The error-source comparison shows how a fixed uncertain coupling parameter
 differs from independent stepwise forcing errors, with their final induced
 variance matched for a direct comparison.
 
+For low-rank initial-state uncertainty, `propagate_covariance_factor` advances
+an (n\times r) covariance factor with (r) matrix-free TLM applications per
+step, without forming a dense (n\times n) transition or covariance.
+`propagate_covariance_factor_step` supports streaming with only the current
+factor in memory, and `apply_covariance_factor` computes (Pv) directly.
+This path currently handles deterministic propagation from an initial factor;
+process-noise factors and rank compression are future work.
+
+To compare nonlinear covariance transport with a Monte Carlo ensemble, build
+and run:
+
+```sh
+cmake --build build --target asdole_nonlinear_covariance_ensemble --parallel
+./build/asdole_nonlinear_covariance_ensemble --check
+```
+
+The example uses a fixed random seed and a small Gaussian initial spread. It
+compares covariance predicted by the discrete TLM along the nominal nonlinear
+trajectory with the empirical covariance of 30,000 nonlinear ASDoLE runs.
+The check allows a 4% relative discrepancy for finite-ensemble sampling. Run
+`./build/asdole_nonlinear_covariance_ensemble --sweep` to see how that
+linearized approximation changes as the initial spread grows; for this model,
+the discrepancy rises above 4% at standard deviation 1.0.
+
+For larger state vectors, `asdole_matrix_free_scaling` exercises the
+`MatrixFreeStepper` on a one-dimensional discrete Laplacian:
+
+```sh
+cmake --build build --target asdole_matrix_free_scaling --parallel
+./build/asdole_matrix_free_scaling
+./build/asdole_matrix_free_scaling --check
+```
+
+This path applies the Jacobian through a callback and solves shifted systems
+with restarted GMRES without storing dense Jacobian or system matrices. The
+benchmark compares against dense stepping through 256 states and runs the
+matrix-free path up to 1024 states. The current TLM, adjoint, and covariance
+transition APIs support the dense reference stepper. Matrix-free TLM and
+adjoint actions are available through `MatrixFreeTrajectoryLinearization`,
+with low-rank covariance factors propagated through those actions.
+
+The `asdole_matrix_free_reaction_diffusion` example applies those pieces to a
+small one-dimensional Fisher–KPP PDE, using a finite-difference Laplacian
+stencil and pointwise logistic reaction:
+
+```sh
+cmake --build build --target asdole_matrix_free_reaction_diffusion --parallel
+./build/asdole_matrix_free_reaction_diffusion
+./build/asdole_matrix_free_reaction_diffusion --check
+ctest --test-dir build -R matrix_free_reaction_diffusion_checks --output-on-failure
+```
+
+The check compares the terminal TLM with a forward finite difference, checks
+the discrete TLM/adjoint dot identity, and confirms the rank-two covariance
+factor remains finite and nonzero. It reports the covariance trace growth
+caused by reaction-driven perturbation amplification.
+
+The same PDE now has a matrix-free inverse example that estimates diffusivity
+and logistic growth rate jointly from three sensors sampled at 11 times:
+
+```sh
+cmake --build build --target asdole_matrix_free_reaction_diffusion_inverse --parallel
+./build/asdole_matrix_free_reaction_diffusion_inverse
+./build/asdole_matrix_free_reaction_diffusion_inverse --check
+ctest --test-dir build -R matrix_free_reaction_diffusion_inverse_checks --output-on-failure
+```
+
+It uses the matrix-free parameter-to-observation TLM and discrete adjoint in a
+damped Gauss–Newton fit. The weighted observation sensitivity has rank two
+for all 33 observations; a single final-time sensor value has rank one and
+cannot distinguish both parameters. The check compares parameter gradients
+with centered finite differences, verifies the sensitivity/transpose dot
+identity, and checks recovery of both known parameters.
+
+The joint-initial-profile example adds two smooth initial-profile coefficients
+to the unknowns. It uses a positive log-modulated profile and an explicit
+Gaussian prior on those coefficients. It reports the data-only rank of all
+four unknowns and the physical-parameter information after accounting for the
+initial-profile nuisance directions. This is a controlled finite-dimensional
+study, not recovery of an arbitrary initial field.
+
+```sh
+cmake --build build --target asdole_matrix_free_reaction_diffusion_joint_initial --parallel
+./build/asdole_matrix_free_reaction_diffusion_joint_initial --check
+ctest --test-dir build -R matrix_free_reaction_diffusion_joint_initial_checks --output-on-failure
+```
+
+To see initial-condition forgetting in the same PDE, run two distinct
+positive initial profiles toward the same stable positive steady state:
+
+```sh
+cmake --build build --target asdole_matrix_free_reaction_diffusion_forgetting --parallel
+./build/asdole_matrix_free_reaction_diffusion_forgetting
+./build/asdole_matrix_free_reaction_diffusion_forgetting --check
+ctest --test-dir build -R matrix_free_reaction_diffusion_initial_forgetting --output-on-failure
+```
+
+Their separation briefly grows before decaying by roughly 11 orders of
+magnitude over 15 time units; a rank-two TLM covariance trace decays by about
+20 orders. The PDE also has the zero solution as a separate equilibrium, so
+this forgetting result applies to the tested positive initial profiles, not
+to every possible nonnegative initial state.
+
 The observation-space example stacks the time-correlated state uncertainty
 and white sensor noise into one covariance, then compares generalized and
 ordinary least squares while fitting a constant sensor bias. Run it with:
@@ -184,6 +290,66 @@ bash scripts/run_initial_condition_forgetting.sh
 This tracks a selected initial perturbation, worst-case TLM gain, propagated
 initial-state covariance, and accumulated information from observing `y`.
 CSV, summary, and plot outputs go to `results/initial-condition-forgetting/`.
+
+For analytical contraction criteria and a check of the actual discrete ASDoLE
+TLM map, see [the incremental exponential stability note](docs/incremental-exponential-stability.md).
+Build and run the coupled-decay certificate example with:
+
+```sh
+cmake --build build --target asdole_contraction_analysis --parallel
+./build/asdole_contraction_analysis
+```
+
+It reports a continuous Lyapunov certificate and per-step weighted contraction
+factors for the numerical trajectory. The former is global for this constant
+linear model; the discrete factors are evaluated for the actual step map.
+The example constructs its weighting matrix automatically with
+`estimate_lyapunov_metric`: it estimates the largest feasible rate for the
+linear system, backs away from that boundary by a safety fraction, solves the
+shifted Lyapunov equation, and verifies the result. This dense solver is for
+small systems.
+
+The nonlinear counterpart reuses the polynomial two-state model from the
+nonlinear convergence study. It establishes a regional contraction bound on
+an invariant box, then compares finite initial-condition differences, the
+TLM, covariance transport, and discrete step factors:
+
+```sh
+cmake --build build --target asdole_nonlinear_contraction_analysis --parallel
+./build/asdole_nonlinear_contraction_analysis
+```
+
+The example now uses `certify_nonlinear_box` with interval enclosures of the
+vector field and Jacobian. It checks the box faces for forward invariance and
+uses a conservative Gershgorin bound to certify a uniform Euclidean
+contraction rate. The supplied callbacks must enclose the full ranges over
+each box; evaluating them at sample points is not enough. The derivation and
+scope of the continuous regional certificate versus the trajectory-local
+discrete checks are in
+[`docs/incremental-exponential-stability.md`](docs/incremental-exponential-stability.md).
+
+`certify_discrete_box_contraction` separately certifies a discrete map's
+invariance and contraction over a box using interval enclosures of the step
+map and its Jacobian. A scalar nonlinear ASDoLE regression exercises the
+actual discrete step, including its tangent map, rather than relying on the
+continuous-time certificate. The existing two-state nonlinear example now
+also certifies its actual ASDoLE step over `[-1,1]^2` at `dt=0.01` and
+`theta=0.7`; the reported induced-factor bound is about `0.99748445`. It
+checks interval state and TLM enclosures against the standard numerical step
+at the box corners and center. Run just this check with:
+
+```sh
+./build/asdole_nonlinear_contraction_analysis --check-discrete
+```
+
+Targeted regression checks cover certificate scaling, automatic Lyapunov
+metric selection and unstable-system rejection, regional box invariance and
+contraction, and scale invariance of the discrete weighted norm:
+
+```sh
+cmake --build build --target asdole_contraction_checks --parallel
+ctest --test-dir build -R 'contraction_certificate_scale_invariance|weighted_contraction_norm_scale_invariance|automatic_lyapunov_metric_nonnormal|regional_nonlinear_contraction_box|discrete_asdole_regional_contraction_box|two_state_discrete_regional_contraction' --output-on-failure
+```
 
 Build and run the control convergence study with:
 
@@ -478,6 +644,17 @@ noise for the two sensor windows. The third shows noiseless parameter bias
 versus time step. The CSV also reports residuals, local sensitivity rank and
 condition number, optimizer iterations, and convergence status. The solver is
 unconstrained; this example does not impose physical parameter bounds.
+
+## Handoff to transient pipe-state finding
+
+This repository now has a matrix-free PDE capstone that jointly fits physical
+parameters and a low-dimensional uncertain initial profile, with prior-aware
+identifiability diagnostics. The planned pipe-state-finding repository should
+reuse these discrete derivative and observation concepts while supplying
+pipe-specific equations, constraints, preconditioners, and scalable
+full-state optimization. See
+[`docs/pipe-state-finding-handoff.md`](docs/pipe-state-finding-handoff.md)
+for the capability inventory, limits, and proposed validation boundary.
 
 ## Source
 

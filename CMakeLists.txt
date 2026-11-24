@@ -66,6 +66,27 @@ if(ASDOLE_BUILD_EXAMPLE)
     add_executable(asdole_covariance_checks examples/covariance_checks.cpp)
     target_link_libraries(asdole_covariance_checks PRIVATE asdole)
 
+    add_executable(asdole_nonlinear_covariance_ensemble examples/nonlinear_covariance_ensemble.cpp)
+    target_link_libraries(asdole_nonlinear_covariance_ensemble PRIVATE asdole)
+
+    add_executable(asdole_matrix_free_scaling examples/matrix_free_scaling.cpp)
+    target_link_libraries(asdole_matrix_free_scaling PRIVATE asdole)
+
+    add_executable(asdole_matrix_free_reaction_diffusion examples/matrix_free_reaction_diffusion.cpp)
+    target_link_libraries(asdole_matrix_free_reaction_diffusion PRIVATE asdole)
+
+    add_executable(asdole_matrix_free_reaction_diffusion_inverse
+                   examples/matrix_free_reaction_diffusion_inverse.cpp)
+    target_link_libraries(asdole_matrix_free_reaction_diffusion_inverse PRIVATE asdole)
+
+    add_executable(asdole_matrix_free_reaction_diffusion_joint_initial
+                   examples/matrix_free_reaction_diffusion_joint_initial.cpp)
+    target_link_libraries(asdole_matrix_free_reaction_diffusion_joint_initial PRIVATE asdole)
+
+    add_executable(asdole_matrix_free_reaction_diffusion_forgetting
+                   examples/matrix_free_reaction_diffusion_forgetting.cpp)
+    target_link_libraries(asdole_matrix_free_reaction_diffusion_forgetting PRIVATE asdole)
+
     add_executable(asdole_error_source_comparison examples/error_source_comparison.cpp)
     target_link_libraries(asdole_error_source_comparison PRIVATE asdole)
 
@@ -80,6 +101,9 @@ if(ASDOLE_BUILD_EXAMPLE)
 
     add_executable(asdole_nonlinear_contraction_analysis examples/nonlinear_contraction_analysis.cpp)
     target_link_libraries(asdole_nonlinear_contraction_analysis PRIVATE asdole)
+
+    add_executable(asdole_contraction_checks examples/contraction_checks.cpp)
+    target_link_libraries(asdole_contraction_checks PRIVATE asdole)
 
     if(BUILD_TESTING)
         foreach(theta IN ITEMS 0.5 0.6 0.7 1.0)
@@ -107,5 +131,25 @@ if(ASDOLE_BUILD_EXAMPLE)
         add_test(NAME inverse_problem_noisy_parameter_recovery COMMAND asdole_inversion_robustness)
         add_test(NAME covariance_transport_regressions COMMAND asdole_covariance_checks)
         add_test(NAME persistent_parameter_vs_step_noise COMMAND asdole_error_source_comparison)
+        add_test(NAME contraction_certificate_scale_invariance
+                 COMMAND asdole_contraction_checks continuous)
+        add_test(NAME weighted_contraction_norm_scale_invariance
+                 COMMAND asdole_contraction_checks discrete_norm)
+        add_test(NAME automatic_lyapunov_metric_nonnormal
+                 COMMAND asdole_contraction_checks metric)
+        add_test(NAME regional_nonlinear_contraction_box
+                 COMMAND asdole_contraction_checks regional)
+        add_test(NAME discrete_asdole_regional_contraction_box
+                 COMMAND asdole_contraction_checks discrete_box)
+        add_test(NAME two_state_discrete_regional_contraction
+                 COMMAND asdole_nonlinear_contraction_analysis --check-discrete)
+        add_test(NAME matrix_free_reaction_diffusion_checks
+                 COMMAND asdole_matrix_free_reaction_diffusion --check)
+        add_test(NAME matrix_free_reaction_diffusion_inverse_checks
+                 COMMAND asdole_matrix_free_reaction_diffusion_inverse --check)
+        add_test(NAME matrix_free_reaction_diffusion_joint_initial_checks
+                 COMMAND asdole_matrix_free_reaction_diffusion_joint_initial --check)
+        add_test(NAME matrix_free_reaction_diffusion_initial_forgetting
+                 COMMAND asdole_matrix_free_reaction_diffusion_forgetting --check)
     endif()
 endif()
